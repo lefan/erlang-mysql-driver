@@ -5,6 +5,7 @@
 %% External exports
 -export([start_link/0,
 	 start/0,
+	 stop/0,
 
 	 prepare/2,
 	 unprepare/1,
@@ -36,6 +37,9 @@ start_link() ->
 
 start() ->
   gen_server:start({local, ?MODULE}, ?MODULE, [], []).
+
+stop() ->
+  gen_server:call(?MODULE, stop).
 
 %% @doc Register a prepared statement with the dispatcher. This call does not
 %%   prepare the statement in any connections. The statement is prepared
@@ -90,6 +94,9 @@ handle_call({get_prepared, Name, Version}, _From, State) ->
 	{value, Stmt} ->
 	    {reply, {ok, Stmt}, State}
     end;
+
+handle_call(stop, _, State) ->
+  {stop, normal, stopped, State};
 
 handle_call(_, _, State) ->
   {reply, error, State}.

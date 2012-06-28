@@ -72,8 +72,10 @@
 %%--------------------------------------------------------------------
 -export([start/8,
 	 start_link/8,
+	 stop/1,
 	 fetch/3,
 	 fetch/4,
+	 execute/4,
 	 execute/5,
 	 execute/6,
 	 transaction/3,
@@ -159,6 +161,9 @@ start_link(Host, Port, User, Password, Database, LogFun, Encoding, PoolId) ->
 		     end),
     post_start(Pid, LogFun).
 
+stop(Pid) ->
+    Pid ! stop.
+
 %% part of start/6 or start_link/6:
 post_start(Pid, LogFun) ->
     receive
@@ -213,6 +218,10 @@ fetch(Pid, Queries, From) ->
 
 fetch(Pid, Queries, From, Timeout)  ->
     do_fetch(Pid, Queries, From, Timeout).
+
+execute(Pid, Name, Params, From) ->
+    {ok, {_, Version}} = mysql_statement:get_prepared(Name),
+    execute(Pid, Name, Version, Params, From, ?DEFAULT_STANDALONE_TIMEOUT).
 
 execute(Pid, Name, Version, Params, From) ->
     execute(Pid, Name, Version, Params, From, ?DEFAULT_STANDALONE_TIMEOUT).
@@ -406,6 +415,8 @@ loop(State) ->
 		 "received data when not expecting any -- "
 		 "ignoring it: {~p, ~p}", [Num, Packet]),
 	    loop(State);
+	stop ->
+	    ?Log2(LogFun, debug, "Asked to exit. Stopping...", []);
         Unknown ->
 	    ?Log2(LogFun, error,
 		  "received unknown signal, exiting: ~p", [Unknown]),
