@@ -4,10 +4,25 @@
 
 -compile(export_all).
 
-statement_test() ->
+statement_test_() ->
+  {setup,
+    fun start/0,
+    fun stop/1,
+    fun tests/1}.
+
+start() ->
   {ok, Pid} = mysql_statement:start(),
+  Pid.
+
+stop(_) ->
+  mysql_statement:stop().
+
+tests(_) ->
   mysql_statement:prepare(fuck, <<"this">>),
-  ?assertEqual({ok, {<<"this">>, 1}}, mysql_statement:get_prepared(fuck)),
+  First = mysql_statement:get_prepared(fuck),
   mysql_statement:prepare(fuck, <<"ittt">>),
-  ?assertEqual({ok, {<<"ittt">>, 2}}, mysql_statement:get_prepared(fuck)),
-  ?assertEqual({error, {undefined, doesntexist}}, mysql_statement:get_prepared(doesntexist)).
+  Second = mysql_statement:get_prepared(fuck),
+  NonExistent = mysql_statement:get_prepared(doesntexist),
+  [?_assertEqual({ok, {<<"this">>, 1}}, First),
+   ?_assertEqual({ok, {<<"ittt">>, 2}}, Second),
+   ?_assertEqual({error, {undefined, doesntexist}}, NonExistent)].
