@@ -19,7 +19,7 @@ start() ->
   Pid.
  
 stop(Pid) ->
-  mysql_statement:stop(),
+  mysql_statement:stop_and_cleanup(),
   mysql_conn:stop(Pid).
 
 basics(Pid) ->

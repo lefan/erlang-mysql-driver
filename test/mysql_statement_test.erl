@@ -15,7 +15,7 @@ start() ->
   Pid.
 
 stop(_) ->
-  mysql_statement:stop().
+  mysql_statement:stop_and_cleanup().
 
 tests(_) ->
   mysql_statement:prepare(fuck, <<"this">>),

@@ -4,42 +4,50 @@
 
 %% External exports
 -export([start_link/0,
-	 start/0,
-	 stop/0,
+    start/0,
+    stop/0,
+    stop_and_cleanup/0,
 
-	 prepare/2,
-	 unprepare/1,
-	 get_prepared/1,
-	 get_prepared/2
-	]).
+    prepare/2,
+    unprepare/1,
+    get_prepared/1,
+    get_prepared/2
+  ]).
 
 %% Internal exports - gen_server callbacks
 -export([init/1,
-	 handle_call/3,
-	 handle_cast/2,
-	 handle_info/2,
-	 terminate/2,
-	 code_change/3
-	]).
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+  ]).
 
 %% Records
 -include("mysql.hrl").
 
--record(state, {
-	  %% maps names to {Statement::binary(), Version::integer()} values
-	  prepares = gb_trees:empty()
-	 }).
+-record(state, {}).
+
+%% Macros
+
+-define(TABLE, mysql_statement_versions).
 
 %% External functions
 
 start_link() ->
-  gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+  gen_server:start_link({local, ?MODULE}, ?MODULE, [self()], []).
 
 start() ->
-  gen_server:start({local, ?MODULE}, ?MODULE, [], []).
+  gen_server:start({local, ?MODULE}, ?MODULE, [self()], []).
 
 stop() ->
   gen_server:call(?MODULE, stop).
+
+%% This is here for use in tests.
+%% Stops the process and deletes the ets table.
+stop_and_cleanup() ->
+  gen_server:call(?MODULE, stop),
+  ets:delete(?TABLE).
 
 %% @doc Register a prepared statement with the dispatcher. This call does not
 %%   prepare the statement in any connections. The statement is prepared
@@ -51,7 +59,7 @@ stop() ->
 %%
 %% @spec prepare(Name::atom(), Query::iolist()) -> ok
 prepare(Name, Query) ->
-    gen_server:cast(?MODULE, {prepare, Name, Query}).
+  gen_server:cast(?MODULE, {prepare, Name, Query}).
 
 %% @doc Unregister a statement that has previously been register with
 %%   the dispatcher. All calls to execute() with the given statement
@@ -60,7 +68,7 @@ prepare(Name, Query) ->
 %%
 %% @spec unprepare(Name::atom()) -> ok
 unprepare(Name) ->
-    gen_server:cast(?MODULE, {unprepare, Name}).
+  gen_server:cast(?MODULE, {unprepare, Name}).
 
 %% @doc Get the prepared statement with the given name.
 %%
@@ -76,24 +84,26 @@ unprepare(Name) ->
 %% @spec get_prepared(Name::atom(), Version::integer()) ->
 %%   {ok, latest} | {ok, Statement::binary()} | {error, Err}
 get_prepared(Name) ->
-    get_prepared(Name, undefined).
+  get_prepared(Name, undefined).
 get_prepared(Name, Version) ->
-    gen_server:call(?MODULE, {get_prepared, Name, Version}).
+  gen_server:call(?MODULE, {get_prepared, Name, Version}).
 
 %% gen_server callbacks
 
-init([]) ->
+init([TableHeir]) ->
+  EtsOptions = [set, named_table, public, {heir, TableHeir, undefined}],
+  ets:new(?TABLE, EtsOptions),
   {ok, #state{}}.
 
 handle_call({get_prepared, Name, Version}, _From, State) ->
-    case gb_trees:lookup(Name, State#state.prepares) of
-	none ->
-	    {reply, {error, {undefined, Name}}, State};
-	{value, {_StmtBin, Version1}} when Version1 == Version ->
-	    {reply, {ok, latest}, State};
-	{value, Stmt} ->
-	    {reply, {ok, Stmt}, State}
-    end;
+  case ets:lookup(?TABLE, Name) of
+    [] ->
+      {reply, {error, {undefined, Name}}, State};
+    [{Name, {_Statement, Version}}] ->
+      {reply, {ok, latest}, State};
+    [{Name, StatementInfo}] ->
+      {reply, {ok, StatementInfo}, State}
+  end;
 
 handle_call(stop, _, State) ->
   {stop, normal, stopped, State};
@@ -101,34 +111,25 @@ handle_call(stop, _, State) ->
 handle_call(_, _, State) ->
   {reply, error, State}.
 
-handle_cast({prepare, Name, Stmt}, State) ->
-    Version1 =
-	case gb_trees:lookup(Name, State#state.prepares) of
-	    {value, {_Stmt, Version}} ->
-		Version + 1;
-	    none ->
-		1
-	end,
-    {noreply, State#state{prepares =
-			  gb_trees:enter(Name, {Stmt, Version1},
-					  State#state.prepares)}};
+handle_cast({prepare, Name, Statement}, State) ->
+  NewVersion = case ets:lookup(?TABLE, Name) of
+    [{Name, {_Existing, OldVersion}}] ->
+      OldVersion + 1;
+    [] ->
+      1
+  end,
+  ets:insert(?TABLE, {Name, {Statement, NewVersion}}),
+  {noreply, State};
 
 handle_cast({unprepare, Name}, State) ->
-    State1 =
-	case gb_trees:lookup(Name, State#state.prepares) of
-	    none ->
-		State;
-	    {value, _Stmt} ->
-		State#state{prepares =
-			    gb_trees:delete(Name, State#state.prepares)}
-	end,
-    {noreply, State1}.
+  ets:delete(?TABLE, Name),
+  {noreply, State}.
 
 handle_info(_, State) ->
   {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
+  {ok, State}.
 
 terminate(_, State) ->
-    {ok, State}.
+  {ok, State}.
