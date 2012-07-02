@@ -18,11 +18,15 @@ stop(_) ->
   mysql_statement:stop_and_cleanup().
 
 tests(_) ->
-  mysql_statement:prepare(fuck, <<"this">>),
+  Reply1 = mysql_statement:prepare(fuck, <<"this">>),
   First = mysql_statement:get_prepared(fuck),
-  mysql_statement:prepare(fuck, <<"ittt">>),
+  Reply2 = mysql_statement:prepare(fuck, <<"ittt">>),
+  Reply3 = mysql_statement:prepare(fuck, <<"this">>),
   Second = mysql_statement:get_prepared(fuck),
   NonExistent = mysql_statement:get_prepared(doesntexist),
-  [?_assertEqual({ok, {<<"this">>, 1}}, First),
-   ?_assertEqual({ok, {<<"ittt">>, 2}}, Second),
+  [?_assertEqual(ok, Reply1),
+   ?_assertEqual({error, statement_exists}, Reply2),
+   ?_assertEqual(ok, Reply3),
+   ?_assertEqual({ok, <<"this">>}, First),
+   ?_assertEqual({ok, <<"this">>}, Second),
    ?_assertEqual({error, {undefined, doesntexist}}, NonExistent)].

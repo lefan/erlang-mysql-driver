@@ -7,21 +7,18 @@
     start/0,
     stop/0,
     stop_and_cleanup/0,
-
     prepare/2,
-    unprepare/1,
-    get_prepared/1,
-    get_prepared/2
+    get_prepared/1
   ]).
 
 %% Internal exports - gen_server callbacks
 -export([init/1,
-    handle_call/3,
-    handle_cast/2,
-    handle_info/2,
-    terminate/2,
-    code_change/3
-  ]).
+	 handle_call/3,
+	 handle_cast/2,
+	 handle_info/2,
+	 terminate/2,
+	 code_change/3
+       ]).
 
 %% Records
 -include("mysql.hrl").
@@ -49,26 +46,8 @@ stop_and_cleanup() ->
   gen_server:call(?MODULE, stop),
   ets:delete(?TABLE).
 
-%% @doc Register a prepared statement with the dispatcher. This call does not
-%%   prepare the statement in any connections. The statement is prepared
-%%   lazily in each connection when it is told to execute the statement.
-%%   If the Name parameter matches the name of a statement that has
-%%   already been registered, the version of the statement is incremented
-%%   and all connections that have already prepared the statement will
-%%   prepare it again with the newest version.
-%%
-%% @spec prepare(Name::atom(), Query::iolist()) -> ok
 prepare(Name, Query) ->
-  gen_server:cast(?MODULE, {prepare, Name, Query}).
-
-%% @doc Unregister a statement that has previously been register with
-%%   the dispatcher. All calls to execute() with the given statement
-%%   will fail once the statement is unprepared. If the statement hasn't
-%%   been prepared, nothing happens.
-%%
-%% @spec unprepare(Name::atom()) -> ok
-unprepare(Name) ->
-  gen_server:cast(?MODULE, {unprepare, Name}).
+  gen_server:call(?MODULE, {prepare, Name, Query}).
 
 %% @doc Get the prepared statement with the given name.
 %%
@@ -84,9 +63,7 @@ unprepare(Name) ->
 %% @spec get_prepared(Name::atom(), Version::integer()) ->
 %%   {ok, latest} | {ok, Statement::binary()} | {error, Err}
 get_prepared(Name) ->
-  get_prepared(Name, undefined).
-get_prepared(Name, Version) ->
-  gen_server:call(?MODULE, {get_prepared, Name, Version}).
+  gen_server:call(?MODULE, {get_prepared, Name}).
 
 %% gen_server callbacks
 
@@ -95,15 +72,25 @@ init([TableHeir]) ->
   ets:new(?TABLE, EtsOptions),
   {ok, #state{}}.
 
-handle_call({get_prepared, Name, Version}, _From, State) ->
+handle_call({get_prepared, Name}, _From, State) ->
   case ets:lookup(?TABLE, Name) of
     [] ->
       {reply, {error, {undefined, Name}}, State};
-    [{Name, {_Statement, Version}}] ->
-      {reply, {ok, latest}, State};
     [{Name, StatementInfo}] ->
       {reply, {ok, StatementInfo}, State}
   end;
+
+handle_call({prepare, Name, Statement}, _, State) ->
+  Reply = case ets:lookup(?TABLE, Name) of
+    [{Name, Statement}] ->
+      ok;
+    [{Name, _Other}] ->
+      {error, statement_exists};
+    [] ->
+      ets:insert(?TABLE, {Name, Statement}),
+      ok
+  end,
+  {reply, Reply, State};
 
 handle_call(stop, _, State) ->
   {stop, normal, stopped, State};
@@ -111,18 +98,7 @@ handle_call(stop, _, State) ->
 handle_call(_, _, State) ->
   {reply, error, State}.
 
-handle_cast({prepare, Name, Statement}, State) ->
-  NewVersion = case ets:lookup(?TABLE, Name) of
-    [{Name, {_Existing, OldVersion}}] ->
-      OldVersion + 1;
-    [] ->
-      1
-  end,
-  ets:insert(?TABLE, {Name, {Statement, NewVersion}}),
-  {noreply, State};
-
-handle_cast({unprepare, Name}, State) ->
-  ets:delete(?TABLE, Name),
+handle_cast(_, State) ->
   {noreply, State}.
 
 handle_info(_, State) ->
