@@ -216,24 +216,6 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 	    {error, io_lib:format("mysql_recv: socket was closed ~p", [_E])}
     end.
 
-send_msg(Pid, Msg, From, Timeout) ->
-    Self = self(),
-    Pid ! Msg,
-    case From of
-	Self ->
-	    %% We are not using a mysql_dispatcher, await the response
-	    receive
-		{fetch_result, Pid, Result} ->
-		    Result
-	    after Timeout ->
-		    {error, "message timed out"}
-	    end;
-	_ ->
-	    %% From is gen_server From,
-	    %% Pid will do gen_server:reply() when it has an answer
-	    ok
-    end.
-
 init([ConnectionInfo, PoolId]) ->
   #mysql_connection_info{host=Host,
 			 port=Port,
