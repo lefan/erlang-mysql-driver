@@ -6,5 +6,5 @@
              mysql_conn,
              mysql_recv]},
   {registered, []},
+  {mod, { mysql, []}},
   {applications, [kernel, stdlib]}]}.
-
