@@ -70,14 +70,13 @@
 %%--------------------------------------------------------------------
 %% External exports
 %%--------------------------------------------------------------------
--export([start/8,
-	 start_link/8,
+-export([start/2,
+	 start_link/2,
 	 stop/1,
 	 fetch/3,
 	 fetch/4,
 	 execute/4,
 	 execute/5,
-	 execute/6,
 	 transaction/3,
 	 transaction/4
 	]).
@@ -94,6 +93,15 @@
 -export([do_recv/3
 	]).
 
+%% Internal exports - gen_server callbacks
+-export([init/1,
+	 handle_call/3,
+	 handle_cast/2,
+	 handle_info/2,
+	 terminate/2,
+	 code_change/3
+       ]).
+
 -include("mysql.hrl").
 -record(state, {
 	  mysql_version,
@@ -103,7 +111,7 @@
 	  data,
 
 	  %% maps statement names to their versions
-	  prepares = gb_trees:empty(),
+	  prepares = sets:new(),
 
 	  %% the id of the connection pool to which this connection belongs
 	  pool_id
@@ -130,61 +138,14 @@
 %% External functions
 %%====================================================================
 
-%%--------------------------------------------------------------------
-%% Function: start(Host, Port, User, Password, Database, LogFun)
-%% Function: start_link(Host, Port, User, Password, Database, LogFun)
-%%           Host     = string()
-%%           Port     = integer()
-%%           User     = string()
-%%           Password = string()
-%%           Database = string()
-%%           LogFun   = undefined | function() of arity 3
-%% Descrip.: Starts a mysql_conn process that connects to a MySQL
-%%           server, logs in and chooses a database.
-%% Returns : {ok, Pid} | {error, Reason}
-%%           Pid    = pid()
-%%           Reason = string()
-%%--------------------------------------------------------------------
-start(Host, Port, User, Password, Database, LogFun, Encoding, PoolId) ->
-    ConnPid = self(),
-    Pid = spawn(fun () ->
-			init(Host, Port, User, Password, Database,
-			     LogFun, Encoding, PoolId, ConnPid)
-		end),
-    post_start(Pid, LogFun).
+start(ConnectionInfo, PoolId) ->
+  gen_server:start(?MODULE, [ConnectionInfo, PoolId], []).
 
-start_link(Host, Port, User, Password, Database, LogFun, Encoding, PoolId) ->
-    ConnPid = self(),
-    Pid = spawn_link(fun () ->
-			     init(Host, Port, User, Password, Database,
-				  LogFun, Encoding, PoolId, ConnPid)
-		     end),
-    post_start(Pid, LogFun).
+start_link(ConnectionInfo, PoolId) ->
+  gen_server:start_link(?MODULE, [ConnectionInfo, PoolId], []).
 
 stop(Pid) ->
-    Pid ! stop.
-
-%% part of start/6 or start_link/6:
-post_start(Pid, LogFun) ->
-    receive
-	{mysql_conn, Pid, ok} ->
-	    {ok, Pid};
-	{mysql_conn, Pid, {error, Reason}} ->
-	    {error, Reason};
-	{mysql_conn, OtherPid, {error, Reason}} ->
-	    % Ignore error message from other processes. This handles the case
-	    % when mysql is shutdown and takes more than 5 secs to close the
-	    % listener socket.
-	    ?Log2(LogFun, debug, "Ignoring message from process ~p | Reason: ~p",
-		  [OtherPid, Reason]),
-	    post_start(Pid, LogFun);
-	Unknown ->
-	    ?Log2(LogFun, error,
-		 "received unknown signal: ~p", [Unknown]),
-		 post_start(Pid, LogFun)
-    after 5000 ->
-	    {error, "timed out"}
-    end.
+  gen_server:call(Pid, stop).
 
 %%--------------------------------------------------------------------
 %% Function: fetch(Pid, Query, From)
@@ -220,14 +181,10 @@ fetch(Pid, Queries, From, Timeout)  ->
     do_fetch(Pid, Queries, From, Timeout).
 
 execute(Pid, Name, Params, From) ->
-    {ok, {_, Version}} = mysql_statement:get_prepared(Name),
-    execute(Pid, Name, Version, Params, From, ?DEFAULT_STANDALONE_TIMEOUT).
+    execute(Pid, Name, Params, From, ?DEFAULT_STANDALONE_TIMEOUT).
 
-execute(Pid, Name, Version, Params, From) ->
-    execute(Pid, Name, Version, Params, From, ?DEFAULT_STANDALONE_TIMEOUT).
-
-execute(Pid, Name, Version, Params, From, Timeout) ->
-    send_msg(Pid, {execute, Name, Version, Params, From}, From, Timeout).
+execute(Pid, Name, Params, From, Timeout) ->
+    send_msg(Pid, {execute, Name, Params, From}, From, Timeout).
 
 transaction(Pid, Fun, From) ->
     transaction(Pid, Fun, From, ?DEFAULT_STANDALONE_TIMEOUT).
@@ -246,7 +203,7 @@ fetch_local(State, Query) ->
     do_query(State, Query).
 
 execute_local(State, Name, Params) ->
-    case do_execute(State, Name, Params, undefined) of
+    case do_execute(State, Name, Params) of
 	{ok, Res, State1} ->
 	    put(?STATE_VAR, State1),
 	    Res;
@@ -309,69 +266,72 @@ send_msg(Pid, Msg, From, Timeout) ->
 	    ok
     end.
 
+init([ConnectionInfo, PoolId]) ->
+  #mysql_connection_info{host=Host,
+			 port=Port,
+			 user=User,
+			 password=Password,
+			 database=Database,
+			 log_fun=LogFun,
+			 encoding=Encoding} = ConnectionInfo,
+  PoolId = asdf,
+  case mysql_recv:start_link(Host, Port, LogFun, self()) of
+    {ok, RecvPid, Sock} ->
+      case mysql_init(Sock, RecvPid, User, Password, LogFun) of
+	{ok, Version} ->
+	  Db = iolist_to_binary(Database),
+	  case do_query(Sock, RecvPid, LogFun,
+	      <<"use ", Db/binary>>,
+	      Version) of
+	    {error, MySQLRes} ->
+	      ?Log2(LogFun, error,
+		"mysql_conn: Failed changing to database "
+		"~p : ~p",
+		[Database,
+		  mysql:get_result_reason(MySQLRes)]),
+	      {error, failed_changing_database};
+	    {_ResultType, _MySQLRes} ->
+	      case Encoding of
+		undefined -> undefined;
+		_ ->
+		  EncodingBinary = list_to_binary(atom_to_list(Encoding)),
+		  do_query(Sock, RecvPid, LogFun,
+		    <<"set names '", EncodingBinary/binary, "'">>,
+		    Version)
+	      end,
+	      State = #state{mysql_version=Version,
+		recv_pid = RecvPid,
+		socket   = Sock,
+		log_fun  = LogFun,
+		pool_id  = PoolId,
+		data     = <<>>
+	      },
+	      {ok, State}
+	  end;
+	{error, _Reason} ->
+	  {error, login_failed}
+      end;
+    E ->
+      ?Log2(LogFun, error,
+	"failed connecting to ~p:~p : ~p",
+	[Host, Port, E]),
+      {error, connect_failed}
+  end.
 
-%%--------------------------------------------------------------------
-%% Function: init(Host, Port, User, Password, Database, LogFun,
-%%                Parent)
-%%           Host     = string()
-%%           Port     = integer()
-%%           User     = string()
-%%           Password = string()
-%%           Database = string()
-%%           LogFun   = function() of arity 4
-%%           Parent   = pid() of process starting this mysql_conn
-%% Descrip.: Connect to a MySQL server, log in and chooses a database.
-%%           Report result of this to Parent, and then enter loop() if
-%%           we were successfull.
-%% Returns : void() | does not return
-%%--------------------------------------------------------------------
-init(Host, Port, User, Password, Database, LogFun, Encoding, PoolId, Parent) ->
-    case mysql_recv:start_link(Host, Port, LogFun, self()) of
-	{ok, RecvPid, Sock} ->
-	    case mysql_init(Sock, RecvPid, User, Password, LogFun) of
-		{ok, Version} ->
-		    Db = iolist_to_binary(Database),
-		    case do_query(Sock, RecvPid, LogFun,
-				  <<"use ", Db/binary>>,
-				  Version) of
-			{error, MySQLRes} ->
-			    ?Log2(LogFun, error,
-				 "mysql_conn: Failed changing to database "
-				 "~p : ~p",
-				 [Database,
-				  mysql:get_result_reason(MySQLRes)]),
-			    Parent ! {mysql_conn, self(),
-				      {error, failed_changing_database}};
+handle_call(_, _, State) ->
+  {reply, ok, State}.
 
-			%% ResultType: data | updated
-			{_ResultType, _MySQLRes} ->
-			    Parent ! {mysql_conn, self(), ok},
-			    case Encoding of
-				undefined -> undefined;
-				_ ->
-				    EncodingBinary = list_to_binary(atom_to_list(Encoding)),
-				    do_query(Sock, RecvPid, LogFun,
-					     <<"set names '", EncodingBinary/binary, "'">>,
-					     Version)
-			    end,
-			    State = #state{mysql_version=Version,
-					   recv_pid = RecvPid,
-					   socket   = Sock,
-					   log_fun  = LogFun,
-					   pool_id  = PoolId,
-					   data     = <<>>
-					  },
-			    loop(State)
-		    end;
-		{error, _Reason} ->
-		    Parent ! {mysql_conn, self(), {error, login_failed}}
-	    end;
-	E ->
-	    ?Log2(LogFun, error,
-		 "failed connecting to ~p:~p : ~p",
-		 [Host, Port, E]),
-	    Parent ! {mysql_conn, self(), {error, connect_failed}}
-    end.
+handle_cast(_, State) ->
+  {noreply, State}.
+
+handle_info(_, State) ->
+  {noreply, State}.
+
+code_change(_OldVsn, State, _Extra) ->
+  {ok, State}.
+
+terminate(_, State) ->
+  {ok, State}.
 
 %%--------------------------------------------------------------------
 %% Function: loop(State)
@@ -399,9 +359,9 @@ loop(State) ->
 
 	    send_reply(From, Res),
 	    loop(State1);
-	{execute, Name, Version, Params, From} ->
+	{execute, Name, Params, From} ->
 	    State1 =
-		case do_execute(State, Name, Params, Version) of
+		case do_execute(State, Name, Params) of
 		    {error, _} = Err ->
 			send_reply(From, Err),
 			State;
@@ -478,15 +438,18 @@ do_queries(Sock, RecvPid, LogFun, Queries, Version) ->
 	  end, ok, Queries).
 
 do_transaction(State, Fun) ->
+    io:format("asdf"),
     case do_query(State, <<"BEGIN">>) of
  	{error, _} = Err ->	
  	    {aborted, Err};
  	_ ->
+    io:format("bsdf"),
 	    case catch Fun() of
 		error = Err -> rollback(State, Err);
 		{error, _} = Err -> rollback(State, Err);
 		{'EXIT', _} = Err -> rollback(State, Err);
 		Res ->
+		    io:format("Csdf"),
 		    case do_query(State, <<"COMMIT">>) of
 			{error, _} = Err ->
 			    rollback(State, {commit_error, Err});
@@ -503,20 +466,20 @@ rollback(State, Err) ->
     Res = do_query(State, <<"ROLLBACK">>),
     {aborted, {Err, {rollback_result, Res}}}.
 
-do_execute(State, Name, Params, ExpectedVersion) ->
-    Res = case gb_trees:lookup(Name, State#state.prepares) of
-	      {value, Version} when Version == ExpectedVersion ->
-		  {ok, latest};
-	      {value, Version} ->
-		  mysql_statement:get_prepared(Name, Version);
-	      none ->
-		  mysql_statement:get_prepared(Name)
-	  end,
-    case Res of
+do_execute(State, Name, Params) ->
+    %Res = case gb_trees:lookup(Name, State#state.prepares) of
+    %          {value, Version} when Version == ExpectedVersion ->
+    %              {ok, latest};
+    %          {value, Version} ->
+    %              mysql_statement:get_prepared(Name, Version);
+    %          none ->
+    %              mysql_statement:get_prepared(Name)
+    %      end,
+    case 1 of
 	{ok, latest} ->
 	    {ok, do_execute1(State, Name, Params), State};
 	{ok, {Stmt, NewVersion}} ->
-	    prepare_and_exec(State, Name, NewVersion, Stmt, Params);
+	    prepare_and_exec(State, Name, 1, Stmt, Params);
 	{error, _} = Err ->
 	    Err
     end.

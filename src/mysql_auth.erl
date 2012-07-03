@@ -48,13 +48,13 @@
 %%           Salt1    = string(), salt 1 from server greeting
 %%           LogFun   = undefined | function() of arity 3
 %% Descrip.: Perform old-style MySQL authentication.
-%% Returns : result of mysql_conn:do_recv/3
+%% Returns : result of do_recv/3
 %%--------------------------------------------------------------------
 do_old_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, LogFun) ->
     Auth = password_old(Password, Salt1),
     Packet2 = make_auth(User, Auth),
     do_send(Sock, Packet2, SeqNum, LogFun),
-    mysql_conn:do_recv(LogFun, RecvPid, SeqNum).
+    do_recv(LogFun, RecvPid, SeqNum).
 
 %%--------------------------------------------------------------------
 %% Function: do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1,
@@ -68,19 +68,19 @@ do_old_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, LogFun) ->
 %%           Salt2    = string(), salt 2 from server greeting
 %%           LogFun   = undefined | function() of arity 3
 %% Descrip.: Perform MySQL authentication.
-%% Returns : result of mysql_conn:do_recv/3
+%% Returns : result of do_recv/3
 %%--------------------------------------------------------------------
 do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, Salt2, LogFun) ->
     Auth = password_new(Password, Salt1 ++ Salt2),
     Packet2 = make_new_auth(User, Auth, none),
     do_send(Sock, Packet2, SeqNum, LogFun),
-    case mysql_conn:do_recv(LogFun, RecvPid, SeqNum) of
+    case do_recv(LogFun, RecvPid, SeqNum) of
 	{ok, Packet3, SeqNum2} ->
 	    case Packet3 of
 		<<254:8>> ->
 		    AuthOld = password_old(Password, Salt1),
 		    do_send(Sock, <<AuthOld/binary, 0:8>>, SeqNum2 + 1, LogFun),
-		    mysql_conn:do_recv(LogFun, RecvPid, SeqNum2 + 1);
+		    do_recv(LogFun, RecvPid, SeqNum2 + 1);
 		_ ->
 		    {ok, Packet3, SeqNum2}
 	    end;
@@ -190,3 +190,37 @@ do_send(Sock, Packet, Num, LogFun) ->
 	   fun() -> {"mysql_auth send packet ~p: ~p", [Num, Packet]} end),
     Data = <<(size(Packet)):24/little, Num:8, Packet/binary>>,
     gen_tcp:send(Sock, Data).
+
+%%--------------------------------------------------------------------
+%% Function: do_recv(LogFun, RecvPid, SeqNum)
+%%           LogFun  = undefined | function() with arity 3
+%%           RecvPid = pid(), mysql_recv process
+%%           SeqNum  = undefined | integer()
+%% Descrip.: Wait for a frame decoded and sent to us by RecvPid.
+%%           Either wait for a specific frame if SeqNum is an integer,
+%%           or just any frame if SeqNum is undefined.
+%% Returns : {ok, Packet, Num} |
+%%           {error, Reason}
+%%           Reason = term()
+%%
+%% Note    : Only to be used externally by the 'mysql_auth' module.
+%%--------------------------------------------------------------------
+do_recv(LogFun, RecvPid, SeqNum)  when is_function(LogFun);
+				       LogFun == undefined,
+				       SeqNum == undefined ->
+    receive
+        {mysql_recv, RecvPid, data, Packet, Num} ->
+	    {ok, Packet, Num};
+	{mysql_recv, RecvPid, closed, _E} ->
+	    {error, io_lib:format("mysql_recv: socket was closed ~p", [_E])}
+    end;
+do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
+				      LogFun == undefined,
+				      is_integer(SeqNum) ->
+    ResponseNum = SeqNum + 1,
+    receive
+        {mysql_recv, RecvPid, data, Packet, ResponseNum} ->
+	    {ok, Packet, ResponseNum};
+	{mysql_recv, RecvPid, closed, _E} ->
+	    {error, io_lib:format("mysql_recv: socket was closed ~p", [_E])}
+    end.

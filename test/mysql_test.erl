@@ -24,7 +24,7 @@ stop(Pid) ->
 
 basics(Pid) ->
   mysql_statement:prepare(insert_user, <<"INSERT INTO USERS (nickname) VALUES (?)">>),
-  mysql_conn:execute(Pid, insert_user, 1, ["James"], self()),
+  mysql_conn:execute(Pid, insert_user, ["James"], self()),
   mysql_conn:execute(Pid, insert_user, ["James"], self()),
   {data, #mysql_result{rows=Rows}} = mysql_conn:fetch(Pid, <<"SELECT * FROM users">>, self()),
   [?_assertEqual([1, <<"James">>], lists:nth(1, Rows)),
