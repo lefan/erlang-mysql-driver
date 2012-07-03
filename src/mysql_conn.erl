@@ -73,8 +73,8 @@
 -export([start/2,
 	 start_link/2,
 	 stop/1,
+	 fetch/2,
 	 fetch/3,
-	 fetch/4,
 	 execute/4,
 	 execute/5,
 	 transaction/3,
@@ -147,38 +147,11 @@ start_link(ConnectionInfo, PoolId) ->
 stop(Pid) ->
   gen_server:call(Pid, stop).
 
-%%--------------------------------------------------------------------
-%% Function: fetch(Pid, Query, From)
-%%           fetch(Pid, Query, From, Timeout)
-%%           Pid     = pid(), mysql_conn to send fetch-request to
-%%           Queries   = A single binary() query or a list of binary() queries.
-%%                     If a list is provided, the return value is the return
-%%                     of the last query, or the first query that has
-%%                     returned an error. If an error occurs, execution of
-%%                     the following queries is aborted.
-%%           From    = pid() or term(), use a From of self() when
-%%                     using this module for a single connection,
-%%                     or pass the gen_server:call/3 From argument if
-%%                     using a gen_server to do the querys (e.g. the
-%%                     mysql_dispatcher)
-%%           Timeout = integer() | infinity, gen_server timeout value
-%% Descrip.: Send a query or a list of queries and wait for the result
-%%           if running stand-alone (From = self()), but don't block
-%%           the caller if we are not running stand-alone
-%%           (From = gen_server From).
-%% Returns : ok                        | (non-stand-alone mode)
-%%           {data, #mysql_result}     | (stand-alone mode)
-%%           {updated, #mysql_result}  | (stand-alone mode)
-%%           {error, #mysql_result}      (stand-alone mode)
-%%           FieldInfo = term()
-%%           Rows      = list() of [string()]
-%%           Reason    = term()
-%%--------------------------------------------------------------------
-fetch(Pid, Queries, From) ->
-    fetch(Pid, Queries, From, ?DEFAULT_STANDALONE_TIMEOUT).
+fetch(Pid, Queries) ->
+  fetch(Pid, Queries, ?DEFAULT_STANDALONE_TIMEOUT).
 
-fetch(Pid, Queries, From, Timeout)  ->
-    do_fetch(Pid, Queries, From, Timeout).
+fetch(Pid, Queries, Timeout)  ->
+  gen_server:call(Pid, {fetch, Queries}, Timeout).
 
 execute(Pid, Name, Params, From) ->
     execute(Pid, Name, Params, From, ?DEFAULT_STANDALONE_TIMEOUT).
@@ -317,6 +290,10 @@ init([ConnectionInfo, PoolId]) ->
 	[Host, Port, E]),
       {error, connect_failed}
   end.
+
+handle_call({fetch, Queries}, From, State) ->
+  Reply = do_queries(State, Queries),
+  {reply, Reply, State};
 
 handle_call(_, _, State) ->
   {reply, ok, State}.
