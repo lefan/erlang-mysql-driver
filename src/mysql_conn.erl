@@ -807,4 +807,3 @@ get_error_data(ErrPacket, ?MYSQL_4_0) ->
 get_error_data(ErrPacket, ?MYSQL_4_1) ->
     <<Code:16/little, _M:8, SqlState:5/binary, Message/binary>> = ErrPacket,
     {Code, {binary_to_list(SqlState), binary_to_list(Message)}}.
-    
