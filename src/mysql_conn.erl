@@ -75,15 +75,14 @@
 	 stop/1,
 	 fetch/2,
 	 fetch/3,
+	 execute/3,
 	 execute/4,
-	 execute/5,
 	 transaction/3,
 	 transaction/4
 	]).
 
 %% private exports to be called only from the 'mysql' module
 -export([fetch_local/2,
-	 execute_local/3,
 	 get_pool_id/1
 	]).
 
@@ -153,11 +152,11 @@ fetch(Pid, Queries) ->
 fetch(Pid, Queries, Timeout)  ->
   gen_server:call(Pid, {fetch, Queries}, Timeout).
 
-execute(Pid, Name, Params, From) ->
-    execute(Pid, Name, Params, From, ?DEFAULT_STANDALONE_TIMEOUT).
+execute(Pid, Name, Params) ->
+  execute(Pid, Name, Params, ?DEFAULT_STANDALONE_TIMEOUT).
 
-execute(Pid, Name, Params, From, Timeout) ->
-    send_msg(Pid, {execute, Name, Params, From}, From, Timeout).
+execute(Pid, Name, Params, Timeout) ->
+  gen_server:call(Pid, {execute, Name, Params}, Timeout).
 
 transaction(Pid, Fun, From) ->
     transaction(Pid, Fun, From, ?DEFAULT_STANDALONE_TIMEOUT).
@@ -174,15 +173,6 @@ get_pool_id(State) ->
 
 fetch_local(State, Query) ->
     do_query(State, Query).
-
-execute_local(State, Name, Params) ->
-    case do_execute(State, Name, Params) of
-	{ok, Res, State1} ->
-	    put(?STATE_VAR, State1),
-	    Res;
-	Err ->
-	    Err
-    end.
 
 %%--------------------------------------------------------------------
 %% Function: do_recv(LogFun, RecvPid, SeqNum)
@@ -294,6 +284,17 @@ handle_call({fetch, Queries}, From, State) ->
   Reply = do_queries(State, Queries),
   {reply, Reply, State};
 
+handle_call({execute, Name, Params}, From, State) ->
+  case sets:is_element(Name, State#state.prepares) of
+    true ->
+      {reply, do_execute1(State, Name, Params), State};
+    false ->
+      {ok, Statement} = mysql_statement:get_prepared(Name),
+      Reply = prepare_and_exec(State, Name, Statement, Params),
+      Prepares = sets:add_element(Name, State#state.prepares),
+      {reply, Reply, State#state{prepares=Prepares}}
+  end;
+
 handle_call(_, _, State) ->
   {reply, ok, State}.
 
@@ -336,16 +337,7 @@ loop(State) ->
 	    send_reply(From, Res),
 	    loop(State1);
 	{execute, Name, Params, From} ->
-	    State1 =
-		case do_execute(State, Name, Params) of
-		    {error, _} = Err ->
-			send_reply(From, Err),
-			State;
-		    {ok, Result, NewState} ->
-			send_reply(From, Result),
-			NewState
-		end,
-	    loop(State1);
+	    loop(State);
 	{mysql_recv, RecvPid, data, Packet, Num} ->
 	    ?Log2(LogFun, error,
 		 "received data when not expecting any -- "
@@ -362,10 +354,10 @@ loop(State) ->
 %% GenSrvFrom is either a gen_server:call/3 From term(),
 %% or a pid if no gen_server was used to make the query
 send_reply(GenSrvFrom, Res) when is_pid(GenSrvFrom) ->
-    %% The query was not sent using gen_server mechanisms       
-    GenSrvFrom ! {fetch_result, self(), Res};
+  %% The query was not sent using gen_server mechanisms       
+  GenSrvFrom ! {fetch_result, self(), Res};
 send_reply(GenSrvFrom, Res) ->
-    gen_server:reply(GenSrvFrom, Res).
+  gen_server:reply(GenSrvFrom, Res).
 
 do_query(State, Query) ->
     do_query(State#state.socket,
@@ -442,35 +434,13 @@ rollback(State, Err) ->
     Res = do_query(State, <<"ROLLBACK">>),
     {aborted, {Err, {rollback_result, Res}}}.
 
-do_execute(State, Name, Params) ->
-    %Res = case gb_trees:lookup(Name, State#state.prepares) of
-    %          {value, Version} when Version == ExpectedVersion ->
-    %              {ok, latest};
-    %          {value, Version} ->
-    %              mysql_statement:get_prepared(Name, Version);
-    %          none ->
-    %              mysql_statement:get_prepared(Name)
-    %      end,
-    case 1 of
-	{ok, latest} ->
-	    {ok, do_execute1(State, Name, Params), State};
-	{ok, {Stmt, NewVersion}} ->
-	    prepare_and_exec(State, Name, 1, Stmt, Params);
-	{error, _} = Err ->
-	    Err
-    end.
-
-prepare_and_exec(State, Name, Version, Stmt, Params) ->
+prepare_and_exec(State, Name, Stmt, Params) ->
     NameBin = atom_to_binary(Name),
     StmtBin = <<"PREPARE ", NameBin/binary, " FROM '",
 		Stmt/binary, "'">>,
     case do_query(State, StmtBin) of
 	{updated, _} ->
-	    State1 =
-		State#state{
-		  prepares = gb_trees:enter(Name, Version,
-					    State#state.prepares)},
-	    {ok, do_execute1(State1, Name, Params), State1};
+	    {ok, do_execute1(State, Name, Params), State};
 	{error, _} = Err ->
 	    Err;
 	Other ->
