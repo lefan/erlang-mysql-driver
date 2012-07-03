@@ -77,13 +77,8 @@
 	 fetch/3,
 	 execute/3,
 	 execute/4,
-	 transaction/3,
-	 transaction/4
-	]).
-
-%% private exports to be called only from the 'mysql' module
--export([fetch_local/2,
-	 get_pool_id/1
+	 transaction/2,
+	 transaction/3
 	]).
 
 %%--------------------------------------------------------------------
@@ -158,21 +153,28 @@ execute(Pid, Name, Params) ->
 execute(Pid, Name, Params, Timeout) ->
   gen_server:call(Pid, {execute, Name, Params}, Timeout).
 
-transaction(Pid, Fun, From) ->
-    transaction(Pid, Fun, From, ?DEFAULT_STANDALONE_TIMEOUT).
+transaction(Pid, Fun) ->
+  transaction(Pid, Fun, ?DEFAULT_STANDALONE_TIMEOUT).
 
-transaction(Pid, Fun, From, Timeout) ->
-    send_msg(Pid, {transaction, Fun, From}, From, Timeout).
+transaction(Pid, Fun, Timeout) ->
+  ok = gen_server:call(Pid, start_transaction, Timeout),
+  case catch Fun() of
+    error = Err -> rollback(Pid, Err);
+    {error, _} = Err -> rollback(Pid, Err);
+    {'EXIT', _} = Err -> rollback(Pid, Err);
+    Res ->
+      case gen_server:call(Pid, commit_transaction, Timeout) of
+	{error, _} = Err -> rollback(Pid, Err);
+	_ ->
+	  case Res of
+	    {atomic, _} -> Res;
+	    _ -> {atomic, Res}
+	  end
+      end
+  end.
 
-get_pool_id(State) ->
-    State#state.pool_id.
-
-%%====================================================================
-%% Internal functions
-%%====================================================================
-
-fetch_local(State, Query) ->
-    do_query(State, Query).
+rollback(Pid, Error) ->
+  gen_server:call(Pid, {rollback_transaction, Error}).
 
 %%--------------------------------------------------------------------
 %% Function: do_recv(LogFun, RecvPid, SeqNum)
@@ -292,6 +294,15 @@ handle_call({execute, Name, Params}, _, State) ->
       {reply, Reply, State#state{prepares=Prepares}}
   end;
 
+handle_call(start_transaction, _, State) ->
+  {reply, start_transaction(State), State};
+
+handle_call({rollback_transaction, Error}, _, State) ->
+  {reply, rollback_transaction(Error, State), State};
+
+handle_call(commit_transaction, _, State) ->
+  {reply, commit_transaction(State), State};
+
 handle_call(_, _, State) ->
   {reply, ok, State}.
 
@@ -353,6 +364,14 @@ do_queries(Sock, RecvPid, LogFun, Queries, Version) ->
 		  end
 	  end, ok, Queries).
 
+start_transaction(State) ->
+  case do_query(State, <<"BEGIN">>) of
+    {error, _} = Err ->	
+      {aborted, Err};
+    _ ->
+      ok
+  end.
+
 do_transaction(State, Fun) ->
     case do_query(State, <<"BEGIN">>) of
  	{error, _} = Err ->	
@@ -375,9 +394,13 @@ do_transaction(State, Fun) ->
 	    end
     end.
 
-rollback(State, Err) ->
-    Res = do_query(State, <<"ROLLBACK">>),
-    {aborted, {Err, {rollback_result, Res}}}.
+rollback_transaction(Err, State) ->
+  Res = do_query(State, <<"ROLLBACK">>),
+  {aborted, {Err, {rollback_result, Res}}}.
+
+commit_transaction(State) ->
+  Res = do_query(State, <<"COMMIT">>),
+  {committed, Res}.
 
 prepare_and_exec(State, Name, Stmt, Params) ->
     NameBin = atom_to_binary(Name),

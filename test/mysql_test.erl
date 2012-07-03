@@ -5,11 +5,17 @@
 
 -compile(export_all).
 
-mysql_test_() ->
+basics_test_() ->
   {setup,
     fun start/0,
     fun stop/1,
     fun basics/1}.
+
+transaction_test_() ->
+  {setup,
+    fun start/0,
+    fun stop/1,
+    fun transaction/1}.
 
 start() ->
   mysql_statement:start(),
@@ -23,6 +29,8 @@ start() ->
   Pid.
  
 stop(Pid) ->
+  mysql_statement:prepare(truncate_users, <<"TRUNCATE users">>),
+  mysql_conn:execute(Pid, truncate_users, []),
   mysql_statement:stop_and_cleanup(),
   mysql_conn:stop(Pid).
 
@@ -30,6 +38,20 @@ basics(Pid) ->
   mysql_statement:prepare(insert_user, <<"INSERT INTO USERS (nickname) VALUES (?)">>),
   mysql_conn:execute(Pid, insert_user, ["James"]),
   mysql_conn:execute(Pid, insert_user, ["James"]),
+  {data, #mysql_result{rows=Rows}} = mysql_conn:fetch(Pid, <<"SELECT * FROM users">>),
+  [?_assertEqual([1, <<"James">>], lists:nth(1, Rows)),
+   ?_assertEqual(2, length(Rows))].
+
+transaction(Pid) ->
+  mysql_statement:prepare(insert_user, <<"INSERT INTO USERS (nickname) VALUES (?)">>),
+  mysql_conn:transaction(Pid, fun() ->
+    mysql_conn:execute(Pid, insert_user, ["James"]),
+    mysql_conn:execute(Pid, insert_user, ["James"])
+  end),
+  mysql_conn:transaction(Pid, fun() ->
+    wrong = mysql_conn:execute(Pid, insert_user, ["James"]), % this should get rolled back
+    mysql_conn:execute(Pid, insert_user, ["James"])
+  end),
   {data, #mysql_result{rows=Rows}} = mysql_conn:fetch(Pid, <<"SELECT * FROM users">>),
   [?_assertEqual([1, <<"James">>], lists:nth(1, Rows)),
    ?_assertEqual(2, length(Rows))].
