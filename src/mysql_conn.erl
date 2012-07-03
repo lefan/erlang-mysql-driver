@@ -83,12 +83,6 @@
 	 rollback/2
 	]).
 
-%%--------------------------------------------------------------------
-%% External exports (should only be used by the 'mysql_auth' module)
-%%--------------------------------------------------------------------
--export([do_recv/3
-	]).
-
 %% Internal exports - gen_server callbacks
 -export([init/1,
 	 handle_call/3,
