@@ -78,7 +78,9 @@
 	 execute/3,
 	 execute/4,
 	 transaction/2,
-	 transaction/3
+	 transaction/3,
+	 rollback/1,
+	 rollback/2
 	]).
 
 %%--------------------------------------------------------------------
@@ -167,11 +169,15 @@ transaction(Pid, Fun, Timeout) ->
 	{error, _} = Err -> rollback(Pid, Err);
 	_ ->
 	  case Res of
+	    aborted -> aborted;
 	    {atomic, _} -> Res;
 	    _ -> {atomic, Res}
 	  end
       end
   end.
+
+rollback(Pid) ->
+  rollback(Pid, undefined).
 
 rollback(Pid, Error) ->
   gen_server:call(Pid, {rollback_transaction, Error}).
@@ -394,6 +400,9 @@ do_transaction(State, Fun) ->
 	    end
     end.
 
+rollback_transaction(undefined, State) ->
+  Res = do_query(State, <<"ROLLBACK">>),
+  aborted;
 rollback_transaction(Err, State) ->
   Res = do_query(State, <<"ROLLBACK">>),
   {aborted, {Err, {rollback_result, Res}}}.

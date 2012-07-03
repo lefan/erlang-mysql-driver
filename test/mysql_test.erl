@@ -52,6 +52,11 @@ transaction(Pid) ->
     wrong = mysql_conn:execute(Pid, insert_user, ["James"]), % this should get rolled back
     mysql_conn:execute(Pid, insert_user, ["James"])
   end),
+  TxnResult = mysql_conn:transaction(Pid, fun() ->
+    mysql_conn:execute(Pid, insert_user, ["James"]),
+    mysql_conn:rollback(Pid)
+  end),
   {data, #mysql_result{rows=Rows}} = mysql_conn:fetch(Pid, <<"SELECT * FROM users">>),
   [?_assertEqual([1, <<"James">>], lists:nth(1, Rows)),
-   ?_assertEqual(2, length(Rows))].
+   ?_assertEqual(2, length(Rows)),
+   ?_assertEqual(aborted, TxnResult)].
