@@ -208,9 +208,6 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 	    {error, io_lib:format("mysql_recv: socket was closed ~p", [_E])}
     end.
 
-do_fetch(Pid, Queries, From, Timeout) ->
-    send_msg(Pid, {fetch, Queries, From}, From, Timeout).
-
 send_msg(Pid, Msg, From, Timeout) ->
     Self = self(),
     Pid ! Msg,
@@ -280,11 +277,11 @@ init([ConnectionInfo, PoolId]) ->
       {error, connect_failed}
   end.
 
-handle_call({fetch, Queries}, From, State) ->
+handle_call({fetch, Queries}, _, State) ->
   Reply = do_queries(State, Queries),
   {reply, Reply, State};
 
-handle_call({execute, Name, Params}, From, State) ->
+handle_call({execute, Name, Params}, _, State) ->
   case sets:is_element(Name, State#state.prepares) of
     true ->
       {reply, do_execute1(State, Name, Params), State};
