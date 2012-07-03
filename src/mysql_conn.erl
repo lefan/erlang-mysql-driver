@@ -361,7 +361,7 @@ start_transaction(State) ->
   end.
 
 rollback_transaction(undefined, State) ->
-  Res = do_query(State, <<"ROLLBACK">>),
+  {updated, #mysql_result{}} = do_query(State, <<"ROLLBACK">>),
   aborted;
 rollback_transaction(Err, State) ->
   Res = do_query(State, <<"ROLLBACK">>),
