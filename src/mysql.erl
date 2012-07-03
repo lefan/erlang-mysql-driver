@@ -3,7 +3,8 @@
 -behaviour(application).
 
 % public api
--export([fetch/2,
+-export([prepare/2,
+	 fetch/2,
 	 fetch/3,
 	 execute/3,
 	 execute/4,
@@ -65,3 +66,6 @@ rollback(PoolName, Error) ->
   poolboy:transaction(PoolName, fun(Worker) ->
 	rollback(Worker, Error)
     end).
+
+prepare(Name, Query) ->
+  mysql_statement:prepare(Name, Query).
