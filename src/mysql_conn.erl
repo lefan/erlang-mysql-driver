@@ -247,7 +247,6 @@ init([ConnectionInfo, PoolId]) ->
 			 database=Database,
 			 log_fun=LogFun,
 			 encoding=Encoding} = ConnectionInfo,
-  PoolId = asdf,
   case mysql_recv:start_link(Host, Port, LogFun, self()) of
     {ok, RecvPid, Sock} ->
       case mysql_init(Sock, RecvPid, User, Password, LogFun) of
