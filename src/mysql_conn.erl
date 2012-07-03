@@ -354,18 +354,15 @@ do_queries(Sock, RecvPid, LogFun, Queries, Version) ->
 	  end, ok, Queries).
 
 do_transaction(State, Fun) ->
-    io:format("asdf"),
     case do_query(State, <<"BEGIN">>) of
  	{error, _} = Err ->	
  	    {aborted, Err};
  	_ ->
-    io:format("bsdf"),
 	    case catch Fun() of
 		error = Err -> rollback(State, Err);
 		{error, _} = Err -> rollback(State, Err);
 		{'EXIT', _} = Err -> rollback(State, Err);
 		Res ->
-		    io:format("Csdf"),
 		    case do_query(State, <<"COMMIT">>) of
 			{error, _} = Err ->
 			    rollback(State, {commit_error, Err});
