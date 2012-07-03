@@ -29,9 +29,17 @@ start() ->
   Pid.
  
 stop(Pid) ->
+  case is_process_alive(Pid) of
+    true ->
+      cleanup_conn(Pid);
+    false ->
+      cleanup_conn(start())
+  end,
+  mysql_statement:stop_and_cleanup().
+
+cleanup_conn(Pid) ->
   mysql_statement:prepare(truncate_users, <<"TRUNCATE users">>),
   mysql_conn:execute(Pid, truncate_users, []),
-  mysql_statement:stop_and_cleanup(),
   mysql_conn:stop(Pid).
 
 basics(Pid) ->
@@ -57,6 +65,11 @@ transaction(Pid) ->
     mysql_conn:rollback(Pid)
   end),
   {data, #mysql_result{rows=Rows}} = mysql_conn:fetch(Pid, <<"SELECT * FROM users">>),
+  TxnResult2 = mysql_conn:transaction(Pid, fun() ->
+    mysql_conn:stop(Pid),
+    mysql_conn:execute(Pid, insert_user, ["James"])
+  end),
   [?_assertEqual([1, <<"James">>], lists:nth(1, Rows)),
    ?_assertEqual(2, length(Rows)),
-   ?_assertEqual(aborted, TxnResult)].
+   ?_assertEqual(aborted, TxnResult),
+   ?_assertEqual({aborted, connection_exited}, TxnResult2)].

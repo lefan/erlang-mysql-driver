@@ -163,6 +163,7 @@ transaction(Pid, Fun, Timeout) ->
   case catch Fun() of
     error = Err -> rollback(Pid, Err);
     {error, _} = Err -> rollback(Pid, Err);
+    {'EXIT', {noproc, _}} = Err -> {aborted, connection_exited};
     {'EXIT', _} = Err -> rollback(Pid, Err);
     Res ->
       case gen_server:call(Pid, commit_transaction, Timeout) of
@@ -290,6 +291,9 @@ handle_call({rollback_transaction, Error}, _, State) ->
 
 handle_call(commit_transaction, _, State) ->
   {reply, commit_transaction(State), State};
+
+handle_call(stop, _, State) ->
+  {stop, normal, stopped, State};
 
 handle_call(_, _, State) ->
   {reply, ok, State}.
