@@ -67,9 +67,12 @@
 
 -module(mysql_conn).
 
-%%--------------------------------------------------------------------
-%% External exports
-%%--------------------------------------------------------------------
+-behaviour(gen_server).
+-behaviour(poolboy_worker).
+
+-include_lib("mysql.hrl").
+
+% public api
 -export([start/2,
 	 start_link/2,
 	 stop/1,
@@ -83,7 +86,10 @@
 	 rollback/2
 	]).
 
-%% Internal exports - gen_server callbacks
+% poolboy_worker behaviour
+-export([start_link/1]).
+
+% gen_server behaviour
 -export([init/1,
 	 handle_call/3,
 	 handle_cast/2,
@@ -92,7 +98,6 @@
 	 code_change/3
        ]).
 
--include("mysql.hrl").
 -record(state, {
 	  mysql_version,
 	  log_fun,
@@ -127,6 +132,18 @@
 %%====================================================================
 %% External functions
 %%====================================================================
+
+start_link(Args) ->
+  ConnectionInfo = #mysql_connection_info{
+    host=proplists:get_value(host, Args),
+    port=proplists:get_value(port, Args),
+    user=proplists:get_value(user, Args),
+    password=proplists:get_value(password, Args),
+    database=proplists:get_value(database, Args),
+    log_fun=fun(_,_,_,_) -> ok end,
+    encoding=proplists:get_value(encoding, Args)
+  },
+  start_link(ConnectionInfo, poolid).
 
 start(ConnectionInfo, PoolId) ->
   gen_server:start(?MODULE, [ConnectionInfo, PoolId], []).
