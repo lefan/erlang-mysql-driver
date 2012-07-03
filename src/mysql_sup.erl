@@ -19,5 +19,17 @@ start_link() ->
 %% supervisor behaviour callbacks
 
 init([]) ->
-  MySQL = ?CHILD(mysql_statement, worker, []),
-  {ok, { {one_for_one, 5, 10}, [MySQL]} }.
+  Pools = case application:get_env(mysql, pools) of
+    {ok, P} ->
+      P;
+    _ ->
+      []
+  end,
+  PoolSpecs = lists:map(fun({PoolName, PoolConfig}) ->
+      Args = [{name, {local, PoolName}},
+	      {worker_module, mysql_conn}]
+	      ++ PoolConfig,
+      poolboy:child_spec(PoolName, Args)
+  end, Pools),
+  Statements = ?CHILD(mysql_statement, worker, []),
+  {ok, { {one_for_one, 5, 10}, [Statements | PoolSpecs]} }.
