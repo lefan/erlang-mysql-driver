@@ -310,55 +310,6 @@ code_change(_OldVsn, State, _Extra) ->
 terminate(_, State) ->
   {ok, State}.
 
-%%--------------------------------------------------------------------
-%% Function: loop(State)
-%%           State = state record()
-%% Descrip.: Wait for signals asking us to perform a MySQL query, or
-%%           signals that the socket was closed.
-%% Returns : error | does not return
-%%--------------------------------------------------------------------
-loop(State) ->
-    RecvPid = State#state.recv_pid,
-    LogFun = State#state.log_fun,
-    receive
-	{fetch, Queries, From} ->
-	    send_reply(From, do_queries(State, Queries)),
-	    loop(State);
-	{transaction, Fun, From} ->
-	    put(?STATE_VAR, State),
-
-	    Res = do_transaction(State, Fun),
-
-	    %% The transaction may have changed the state of this process
-	    %% if it has executed prepared statements. This would happen in
-	    %% mysql:execute.
-	    State1 = get(?STATE_VAR),
-
-	    send_reply(From, Res),
-	    loop(State1);
-	{execute, Name, Params, From} ->
-	    loop(State);
-	{mysql_recv, RecvPid, data, Packet, Num} ->
-	    ?Log2(LogFun, error,
-		 "received data when not expecting any -- "
-		 "ignoring it: {~p, ~p}", [Num, Packet]),
-	    loop(State);
-	stop ->
-	    ?Log2(LogFun, debug, "Asked to exit. Stopping...", []);
-        Unknown ->
-	    ?Log2(LogFun, error,
-		  "received unknown signal, exiting: ~p", [Unknown]),
-	    error
-    end.
-
-%% GenSrvFrom is either a gen_server:call/3 From term(),
-%% or a pid if no gen_server was used to make the query
-send_reply(GenSrvFrom, Res) when is_pid(GenSrvFrom) ->
-  %% The query was not sent using gen_server mechanisms       
-  GenSrvFrom ! {fetch_result, self(), Res};
-send_reply(GenSrvFrom, Res) ->
-  gen_server:reply(GenSrvFrom, Res).
-
 do_query(State, Query) ->
     do_query(State#state.socket,
 	       State#state.recv_pid,
