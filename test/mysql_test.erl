@@ -13,9 +13,13 @@ mysql_test_() ->
 
 start() ->
   mysql_statement:start(),
-  {ok, Pid} = mysql_conn:start("localhost", 3306, "root",
-			       "", "erlang_mysql_driver_testdb",
-			       fun(_,_,_,_) -> ok end, utf8, fuckitttt),
+  {ok, Pid} = mysql_conn:start(#mysql_connection_info{host="localhost",
+						      port=3306,
+						      user="root",
+						      password="",
+						      database="erlang_mysql_driver_testdb", 
+						      log_fun=fun(_,_,_,_) -> ok end, 
+						      encoding=utf8}, fuckitttt),
   Pid.
  
 stop(Pid) ->
@@ -26,6 +30,6 @@ basics(Pid) ->
   mysql_statement:prepare(insert_user, <<"INSERT INTO USERS (nickname) VALUES (?)">>),
   mysql_conn:execute(Pid, insert_user, ["James"], self()),
   mysql_conn:execute(Pid, insert_user, ["James"], self()),
-  {data, #mysql_result{rows=Rows}} = mysql_conn:fetch(Pid, <<"SELECT * FROM users">>, self()),
+  {data, #mysql_result{rows=Rows}} = mysql_conn:fetch(Pid, <<"SELECT * FROM users">>),
   [?_assertEqual([1, <<"James">>], lists:nth(1, Rows)),
    ?_assertEqual(2, length(Rows))].
