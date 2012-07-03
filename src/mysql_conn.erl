@@ -360,28 +360,6 @@ start_transaction(State) ->
       ok
   end.
 
-do_transaction(State, Fun) ->
-    case do_query(State, <<"BEGIN">>) of
- 	{error, _} = Err ->	
- 	    {aborted, Err};
- 	_ ->
-	    case catch Fun() of
-		error = Err -> rollback(State, Err);
-		{error, _} = Err -> rollback(State, Err);
-		{'EXIT', _} = Err -> rollback(State, Err);
-		Res ->
-		    case do_query(State, <<"COMMIT">>) of
-			{error, _} = Err ->
-			    rollback(State, {commit_error, Err});
-			_ ->
-			    case Res of
-				{atomic, _} -> Res;
-				_ -> {atomic, Res}
-			    end
-		    end
-	    end
-    end.
-
 rollback_transaction(undefined, State) ->
   Res = do_query(State, <<"ROLLBACK">>),
   aborted;
