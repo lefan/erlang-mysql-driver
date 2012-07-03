@@ -392,7 +392,7 @@ prepare_and_exec(State, Name, Stmt, Params) ->
 		Stmt/binary, "'">>,
     case do_query(State, StmtBin) of
 	{updated, _} ->
-	    {ok, do_execute1(State, Name, Params), State};
+	    do_execute1(State, Name, Params);
 	{error, _} = Err ->
 	    Err;
 	Other ->
