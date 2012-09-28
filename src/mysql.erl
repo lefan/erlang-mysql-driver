@@ -55,7 +55,7 @@ transaction(PoolName, Fun, Timeout) when is_pid(PoolName) ->
 transaction(PoolName, Fun, Timeout) when is_atom(PoolName) ->
   poolboy:transaction(PoolName, fun(Worker) ->
 	transaction(Worker, Fun, Timeout)
-    end).
+    end, Timeout).
 
 rollback(PoolName) ->
   rollback(PoolName, undefined).
