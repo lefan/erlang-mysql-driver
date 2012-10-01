@@ -34,7 +34,7 @@ fetch(PoolName, Queries, Timeout) when is_pid(PoolName) ->
 fetch(PoolName, Queries, Timeout) when is_atom(PoolName) ->
   poolboy:transaction(PoolName, fun(Worker) ->
 	fetch(Worker, Queries, Timeout)
-    end).
+    end, Timeout).
 
 execute(PoolName, Name, Params) ->
   execute(PoolName, Name, Params, ?DEFAULT_TIMEOUT).
@@ -45,7 +45,7 @@ execute(PoolName, Name, Params, Timeout) when is_pid(PoolName) ->
 execute(PoolName, Name, Params, Timeout) when is_atom(PoolName) ->
   poolboy:transaction(PoolName, fun(Worker) ->
 	execute(Worker, Name, Params, Timeout)
-    end).
+    end, Timeout).
 
 transaction(PoolName, Fun) ->
   transaction(PoolName, Fun, ?DEFAULT_TIMEOUT).
