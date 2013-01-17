@@ -25,11 +25,11 @@ init([]) ->
     _ ->
       []
   end,
-  PoolSpecs = lists:map(fun({PoolName, PoolConfig}) ->
-      Args = [{name, {local, PoolName}},
+  PoolSpecs = lists:map(fun({PoolName, SizeArgs, WorkerArgs}) ->
+      PoolArgs = [{name, {local, PoolName}},
 	      {worker_module, mysql_conn}]
-	      ++ PoolConfig,
-      poolboy:child_spec(PoolName, Args)
+	      ++ SizeArgs,
+      poolboy:child_spec(PoolName, PoolArgs, WorkerArgs)
   end, Pools),
   Statements = ?CHILD(mysql_statement, worker, []),
   {ok, { {one_for_one, 5, 10}, [Statements | PoolSpecs]} }.
